@@ -10,6 +10,7 @@ const os = require('os');
 // Token provided by user
 const TOKEN = '8827267875:AAHILwtvs21Fz7Q8hbBYzOWYS6co2PHxwk0';
 const PORT = process.env.PORT || 3000;
+const CURRENT_VERSION = '1.1.0';
 
 const app = express();
 app.use(cors());
@@ -37,11 +38,11 @@ bot.onText(/\/start/, (msg) => {
 
     const webAppUrl = publicUrl || `http://localhost:${PORT}`;
 
-    bot.sendMessage(chatId, '🖥️ *Добро пожаловать в панель управления ПК!*\n\nНажмите кнопку ниже, чтобы открыть мобильное Web App приложение для управления вашим компьютером.', {
+    bot.sendMessage(chatId, '🖥️ *Панель управления ПК (v' + CURRENT_VERSION + ')*\n\nНажмите кнопку ниже, чтобы открыть расширенную панель управления.', {
         parse_mode: 'Markdown',
         reply_markup: {
             inline_keyboard: [
-                [{ text: '🚀 Открыть панель управления', web_app: { url: webAppUrl } }]
+                [{ text: '🚀 Открыть Web App панель', web_app: { url: webAppUrl } }]
             ]
         }
     });
@@ -51,7 +52,7 @@ bot.onText(/\/start/, (msg) => {
 function runPowerShell(cmd, useSta = false) {
     return new Promise((resolve, reject) => {
         const psFlag = useSta ? '-Sta' : '';
-        exec(`powershell ${psFlag} -Command "${cmd}"`, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
+        exec(`powershell ${psFlag} -Command "${cmd}"`, { maxBuffer: 1024 * 1024 * 20 }, (error, stdout, stderr) => {
             if (error) {
                 reject(stderr || error.message);
             } else {
@@ -61,6 +62,16 @@ function runPowerShell(cmd, useSta = false) {
     });
 }
 
+// API: Version Check (Auto-Update)
+app.get('/api/version', (req, res) => {
+    res.json({
+        success: true,
+        version: CURRENT_VERSION,
+        changelog: 'Добавлены расширенные функции управления ПК: питание, файлы, буфер обмена и авто-обновление.',
+        updateUrl: publicUrl ? `${publicUrl}/update` : null
+    });
+});
+
 // API: System Status
 app.get('/api/status', async (req, res) => {
     try {
@@ -68,13 +79,13 @@ app.get('/api/status', async (req, res) => {
         const arch = os.arch() === 'x64' ? '64-bit' : os.arch();
         const platform = `Windows ${arch}`;
         const uptime = os.uptime();
-        res.json({ success: true, hostname, platform, uptime, publicUrl });
+        res.json({ success: true, hostname, platform, uptime, publicUrl, version: CURRENT_VERSION });
     } catch (err) {
         res.status(500).json({ success: false, error: err.toString() });
     }
 });
 
-// API: Take Screenshot
+// API: Take Screenshot (Returns Base64 to prevent any file transfer race conditions)
 app.get('/api/screenshot', async (req, res) => {
     const screenshotPath = path.join(__dirname, 'screenshot.png');
     try {
@@ -90,10 +101,14 @@ app.get('/api/screenshot', async (req, res) => {
         $bitmap.Dispose()
         `;
 
-        await runPowerShell(psScript, true); // useSta = true is required for Windows.Forms
+        await runPowerShell(psScript, true);
 
         if (fs.existsSync(screenshotPath)) {
-            res.sendFile(screenshotPath);
+            const bitmapBytes = fs.readFileSync(screenshotPath);
+            const base64Image = `data:image/png;base64,${bitmapBytes.toString('base64')}`;
+            // Clean up file
+            try { fs.unlinkSync(screenshotPath); } catch(e) {}
+            res.json({ success: true, image: base64Image });
         } else {
             res.status(500).json({ success: false, error: 'Screenshot file not created' });
         }
@@ -151,11 +166,78 @@ app.post('/api/exec', async (req, res) => {
     }
 });
 
+// API: System Controls (Power / Lock / Sleep)
+app.post('/api/system/control', async (req, res) => {
+    const { action } = req.body;
+    try {
+        let cmd = '';
+        if (action === 'shutdown') {
+            cmd = 'shutdown /s /t 5';
+        } else if (action === 'restart') {
+            cmd = 'shutdown /r /t 5';
+        } else if (action === 'lock') {
+            cmd = 'rundll32.exe user32.dll,LockWorkStation';
+        } else if (action === 'sleep') {
+            cmd = 'rundll32.exe powrprof.dll,SetSuspendState 0,1,0';
+        } else {
+            return res.status(400).json({ success: false, error: 'Unknown action' });
+        }
+
+        await runPowerShell(cmd);
+        res.json({ success: true, message: `Действие ${action} выполнено.` });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.toString() });
+    }
+});
+
+// API: File Explorer (List directory contents)
+app.post('/api/files', async (req, res) => {
+    const dirPath = req.body.path || 'C:\\';
+    try {
+        const psCmd = `Get-ChildItem -Path "${dirPath}" -ErrorAction SilentlyContinue | Select-Object Name, FullName, Attributes, Length | ConvertTo-Json -Compress`;
+        const output = await runPowerShell(psCmd);
+        let items = output ? JSON.parse(output) : [];
+        if (!Array.isArray(items)) {
+            items = [items];
+        }
+        const formatted = items.map(item => ({
+            name: item.Name,
+            path: item.FullName,
+            isDirectory: item.Attributes && item.Attributes.toString().includes('Directory'),
+            size: item.Length ? Math.round(item.Length / 1024) : 0
+        })).sort((a, b) => b.isDirectory - a.isDirectory);
+
+        res.json({ success: true, currentPath: dirPath, items: formatted });
+    } catch (err) {
+        res.status(500).json({ success: false, error: 'Не удалось открыть директорию: ' + err.toString() });
+    }
+});
+
+// API: Clipboard (Get text)
+app.get('/api/clipboard', async (req, res) => {
+    try {
+        const clip = await runPowerShell('Get-Clipboard');
+        res.json({ success: true, clipboard: clip });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.toString() });
+    }
+});
+
+// API: Clipboard (Set text)
+app.post('/api/clipboard', async (req, res) => {
+    const { text } = req.body;
+    try {
+        await runPowerShell(`Set-Clipboard -Value "${text.replace(/"/g, '`"')}"`);
+        res.json({ success: true, message: 'Буфер обмена обновлен' });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.toString() });
+    }
+});
+
 // Start Express Server
 app.listen(PORT, async () => {
     console.log(`[SERVER] Running on http://localhost:${PORT}`);
 
-    // Setup LocalTunnel for HTTPS Web App URL
     try {
         console.log('[TUNNEL] Starting localtunnel...');
         const tunnel = await localtunnel({ port: PORT });
@@ -165,7 +247,7 @@ app.listen(PORT, async () => {
         bot.setChatMenuButton({
             menu_button: {
                 type: 'web_app',
-                text: 'Управление ПК',
+                text: 'Управление ПК v' + CURRENT_VERSION,
                 web_app: { url: publicUrl }
             }
         }).catch(err => console.log('[BOT] Menu button update note:', err.message));
