@@ -1,0 +1,15 @@
+{
+  "name": "telegram-pc-bot",
+  "version": "1.0.0",
+  "description": "Telegram Web App for remote PC control",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "localtunnel": "^2.0.2",
+    "node-telegram-bot-api": "^0.65.1"
+  }
+}

@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PC Remote Controller</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        tg: {
+                            bg: 'var(--tg-theme-bg-color, #1f2937)',
+                            text: 'var(--tg-theme-text-color, #f9fafb)',
+                            hint: 'var(--tg-theme-hint-color, #9ca3af)',
+                            primary: 'var(--tg-theme-button-color, #3b82f6)',
+                            buttonText: 'var(--tg-theme-button-text-color, #ffffff)',
+                            secondaryBg: 'var(--tg-theme-secondary-bg-color, #374151)'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: var(--tg-theme-bg-color, #111827);
+            color: var(--tg-theme-text-color, #f3f4f6);
+        }
+    </style>
+</head>
+<body class="min-h-screen pb-20 select-none">
+
+    <!-- Header -->
+    <header class="p-4 border-b border-gray-700 flex justify-between items-center bg-opacity-50 backdrop-blur sticky top-0 z-50">
+        <div class="flex items-center space-x-2">
+            <div class="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+            <h1 class="font-bold text-lg" id="hostname-display">PC Controller</h1>
+        </div>
+        <span id="platform-badge" class="text-xs px-2 py-1 rounded bg-blue-600/30 text-blue-400 font-mono">Windows</span>
+    </header>
+
+    <!-- Main Content Tabs -->
+    <main class="p-4 max-w-md mx-auto">
+
+        <!-- TAB 1: STATUS / DASHBOARD -->
+        <section id="tab-status" class="space-y-4 tab-content">
+            <div class="bg-gray-800/80 p-4 rounded-xl border border-gray-700 shadow-lg">
+                <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Состояние системы</h2>
+                <div class="space-y-2 text-sm">
+                    <div class="flex justify-between py-1 border-b border-gray-700/50">
+                        <span class="text-gray-400">Хост:</span>
+                        <span id="sys-hostname" class="font-mono font-medium">-</span>
+                    </div>
+                    <div class="flex justify-between py-1 border-b border-gray-700/50">
+                        <span class="text-gray-400">ОС:</span>
+                        <span id="sys-platform" class="font-mono font-medium">-</span>
+                    </div>
+                    <div class="flex justify-between py-1">
+                        <span class="text-gray-400">Аптайм:</span>
+                        <span id="sys-uptime" class="font-mono font-medium">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+                <button onclick="switchTab('screenshot')" class="p-4 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-xl font-semibold shadow-lg flex flex-col items-center justify-center space-y-2 active:scale-95 transition">
+                    <i class="fa-solid fa-camera text-2xl"></i>
+                    <span>Скриншот</span>
+                </button>
+                <button onclick="switchTab('terminal')" class="p-4 bg-gradient-to-br from-emerald-600 to-teal-700 rounded-xl font-semibold shadow-lg flex flex-col items-center justify-center space-y-2 active:scale-95 transition">
+                    <i class="fa-solid fa-terminal text-2xl"></i>
+                    <span>Терминал</span>
+                </button>
+                <button onclick="switchTab('processes')" class="p-4 bg-gradient-to-br from-purple-600 to-pink-700 rounded-xl font-semibold shadow-lg flex flex-col items-center justify-center space-y-2 active:scale-95 transition col-span-2">
+                    <i class="fa-solid fa-microchip text-2xl"></i>
+                    <span>Диспетчер процессов</span>
+                </button>
+            </div>
+        </section>
+
+        <!-- TAB 2: SCREENSHOT -->
+        <section id="tab-screenshot" class="space-y-4 tab-content hidden">
+            <div class="flex justify-between items-center">
+                <h2 class="text-lg font-bold">Скриншот экрана</h2>
+                <button onclick="loadScreenshot()" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium transition flex items-center space-x-1.5">
+                    <i class="fa-solid fa-rotate-right" id="ss-spinner"></i>
+                    <span>Обновить</span>
+                </button>
+            </div>
+            <div class="bg-gray-800 p-2 rounded-xl border border-gray-700 flex justify-center items-center min-h-[250px]">
+                <div id="ss-loading" class="text-gray-400 text-sm flex flex-col items-center space-y-2">
+                    <i class="fa-solid fa-spinner fa-spin text-2xl"></i>
+                    <span>Загрузка скриншота...</span>
+                </div>
+                <img id="screenshot-img" class="rounded-lg max-h-[400px] object-contain hidden shadow-md cursor-pointer" onclick="window.open(this.src)" />
+            </div>
+            <p class="text-xs text-center text-gray-400">Нажмите на картинку для открытия в полном размере</p>
+        </section>
+
+        <!-- TAB 3: TERMINAL -->
+        <section id="tab-terminal" class="space-y-3 tab-content hidden">
+            <h2 class="text-lg font-bold">PowerShell Терминал</h2>
+            <div class="flex space-x-2">
+                <input type="text" id="term-input" placeholder="Введите команду (например: ipconfig)..." class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 font-mono" onkeydown="if(event.key==='Enter') executeCommand()">
+                <button onclick="executeCommand()" class="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-sm font-semibold transition">
+                    <i class="fa-solid fa-paper-plane"></i>
+                </button>
+            </div>
+            <div class="bg-black/80 p-3 rounded-xl border border-gray-800 font-mono text-xs text-green-400 h-[350px] overflow-y-auto whitespace-pre-wrap select-text" id="term-output">
+# Введите команду выше для выполнения на ПК...
+</div>
+            <div class="flex flex-wrap gap-2 pt-1">
+                <button onclick="quickCmd('Get-Date')" class="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 rounded text-xs font-mono">Date</button>
+                <button onclick="quickCmd('Get-NetIPAddress | Where-Object AddressFamily -eq \"IPv4\" | Select-Object InterfaceAlias, IPAddress')" class="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 rounded text-xs font-mono">IP Info</button>
+                <button onclick="quickCmd('Get-Service | Where-Object Status -eq \"Running\" | Select-Object -First 15 Name, DisplayName')" class="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 rounded text-xs font-mono">Services</button>
+                <button onclick="document.getElementById('term-output').innerText=''" class="px-2.5 py-1 bg-red-900/40 text-red-300 hover:bg-red-900/60 rounded text-xs">Clear</button>
+            </div>
+        </section>
+
+        <!-- TAB 4: PROCESSES -->
+        <section id="tab-processes" class="space-y-3 tab-content hidden">
+            <div class="flex justify-between items-center">
+                <h2 class="text-lg font-bold">Процессы</h2>
+                <button onclick="loadProcesses()" class="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 rounded-lg text-sm font-medium transition flex items-center space-x-1.5">
+                    <i class="fa-solid fa-rotate-right"></i>
+                    <span>Обновить</span>
+                </button>
+            </div>
+            <input type="text" id="proc-search" placeholder="Поиск процесса..." oninput="filterProcesses()" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500">
+
+            <div class="bg-gray-800/80 rounded-xl border border-gray-700 overflow-hidden max-h-[400px] overflow-y-auto">
+                <div id="proc-loading" class="p-8 text-center text-gray-400 text-sm flex flex-col items-center space-y-2">
+                    <i class="fa-solid fa-spinner fa-spin text-2xl"></i>
+                    <span>Загрузка процессов...</span>
+                </div>
+                <div id="proc-list" class="divide-y divide-gray-700/50 hidden"></div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Bottom Navigation Bar -->
+    <nav class="fixed bottom-0 left-0 right-0 bg-gray-900/90 backdrop-blur border-t border-gray-800 p-2 flex justify-around items-center z-50">
+        <button onclick="switchTab('status')" id="nav-status" class="flex flex-col items-center text-blue-500 space-y-1 py-1 px-4 rounded-lg transition">
+            <i class="fa-solid fa-house text-lg"></i>
+            <span class="text-[10px] font-medium">Главная</span>
+        </button>
+        <button onclick="switchTab('screenshot')" id="nav-screenshot" class="flex flex-col items-center text-gray-400 space-y-1 py-1 px-4 rounded-lg transition">
+            <i class="fa-solid fa-camera text-lg"></i>
+            <span class="text-[10px] font-medium">Экран</span>
+        </button>
+        <button onclick="switchTab('terminal')" id="nav-terminal" class="flex flex-col items-center text-gray-400 space-y-1 py-1 px-4 rounded-lg transition">
+            <i class="fa-solid fa-terminal text-lg"></i>
+            <span class="text-[10px] font-medium">Терминал</span>
+        </button>
+        <button onclick="switchTab('processes')" id="nav-processes" class="flex flex-col items-center text-gray-400 space-y-1 py-1 px-4 rounded-lg transition">
+            <i class="fa-solid fa-microchip text-lg"></i>
+            <span class="text-[10px] font-medium">Процессы</span>
+        </button>
+    </nav>
+
+    <!-- JS Logic -->
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.ready();
+        tg.expand();
+
+        let API_BASE = window.location.origin;
+        let allProcesses = [];
+
+        // Tab Switching
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+            document.getElementById(`tab-${tabName}`).classList.remove('hidden');
+
+            document.querySelectorAll('nav button').forEach(btn => {
+                btn.classList.remove('text-blue-500');
+                btn.classList.add('text-gray-400');
+            });
+            const navBtn = document.getElementById(`nav-${tabName}`);
+            if (navBtn) {
+                navBtn.classList.remove('text-gray-400');
+                navBtn.classList.add('text-blue-500');
+            }
+
+            if (tabName === 'screenshot') {
+                loadScreenshot();
+            } else if (tabName === 'processes') {
+                loadProcesses();
+            } else if (tabName === 'status') {
+                loadStatus();
+            }
+
+            window.scrollTo(0, 0);
+        }
+
+        // Load System Status
+        async function loadStatus() {
+            try {
+                const res = await fetch(`${API_BASE}/api/status`);
+                const data = await res.json();
+                if (data.success) {
+                    document.getElementById('hostname-display').innerText = data.hostname;
+                    document.getElementById('sys-hostname').innerText = data.hostname;
+                    document.getElementById('sys-platform').innerText = data.platform;
+
+                    const hours = Math.floor(data.uptime / 3600);
+                    const minutes = Math.floor((data.uptime % 3600) / 60);
+                    document.getElementById('sys-uptime').innerText = `${hours} ч. ${minutes} мин.`;
+                }
+            } catch (err) {
+                console.error('Failed to load status:', err);
+            }
+        }
+
+        // Load Screenshot
+        async function loadScreenshot() {
+            const img = document.getElementById('screenshot-img');
+            const loading = document.getElementById('ss-loading');
+
+            loading.classList.remove('hidden');
+            img.classList.add('hidden');
+
+            try {
+                const res = await fetch(`${API_BASE}/api/screenshot`);
+                if (res.ok) {
+                    const blob = await res.blob();
+                    img.src = URL.createObjectURL(blob);
+                    loading.classList.add('hidden');
+                    img.classList.remove('hidden');
+                } else {
+                    loading.innerText = 'Ошибка загрузки скриншота';
+                }
+            } catch (err) {
+                loading.innerText = 'Ошибка соединения с ПК';
+            }
+        }
+
+        // Execute Command
+        async function executeCommand() {
+            const input = document.getElementById('term-input');
+            const output = document.getElementById('term-output');
+            const cmd = input.value.trim();
+            if (!cmd) return;
+
+            output.innerText += `\n\nPS> ${cmd}\n⏳ Выполнение...`;
+            output.scrollTop = output.scrollHeight;
+            input.value = '';
+
+            try {
+                const res = await fetch(`${API_BASE}/api/exec`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ command: cmd })
+                });
+                const data = await res.json();
+                // Replace last line with output
+                const text = output.innerText;
+                const lastIdx = text.lastIndexOf('⏳ Выполнение...');
+                if (lastIdx !== -1) {
+                    output.innerText = text.substring(0, lastIdx) + (data.output || '(пустой вывод)');
+                } else {
+                    output.innerText += `\n${data.output}`;
+                }
+            } catch (err) {
+                output.innerText += `\nОшибка выполнения: ${err}`;
+            }
+            output.scrollTop = output.scrollHeight;
+        }
+
+        function quickCmd(cmd) {
+            document.getElementById('term-input').value = cmd;
+            executeCommand();
+        }
+
+        // Load Processes
+        async function loadProcesses() {
+            const loading = document.getElementById('proc-loading');
+            const list = document.getElementById('proc-list');
+
+            loading.classList.remove('hidden');
+            list.classList.add('hidden');
+
+            try {
+                const res = await fetch(`${API_BASE}/api/processes`);
+                const data = await res.json();
+                if (data.success) {
+                    allProcesses = data.processes;
+                    renderProcesses(allProcesses);
+                    loading.classList.add('hidden');
+                    list.classList.remove('hidden');
+                } else {
+                    loading.innerText = 'Не удалось загрузить процессы';
+                }
+            } catch (err) {
+                loading.innerText = 'Ошибка соединения с ПК';
+            }
+        }
+
+        function renderProcesses(procs) {
+            const list = document.getElementById('proc-list');
+            list.innerHTML = procs.map(p => `
+                <div class="p-3 flex justify-between items-center hover:bg-gray-700/40 transition">
+                    <div>
+                        <div class="font-bold text-sm">${p.name}</div>
+                        <div class="text-xs text-gray-400 font-mono">PID: ${p.id} | RAM: ${p.memory} MB</div>
+                    </div>
+                    <button onclick="killProcess(${p.id})" class="px-2.5 py-1 bg-red-600/30 text-red-400 hover:bg-red-600 hover:text-white rounded text-xs font-semibold transition">
+                        Завершить
+                    </button>
+                </div>
+            `).join('');
+        }
+
+        function filterProcesses() {
+            const query = document.getElementById('proc-search').value.toLowerCase();
+            const filtered = allProcesses.filter(p => p.name.toLowerCase().includes(query) || p.id.toString().includes(query));
+            renderProcesses(filtered);
+        }
+
+        async function killProcess(pid) {
+            if (!confirm(`Вы действительно хотите завершить процесс PID ${pid}?`)) return;
+            try {
+                const res = await fetch(`${API_BASE}/api/process/kill`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pid })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    loadProcesses();
+                } else {
+                    alert('Ошибка: ' + data.error);
+                }
+            } catch (err) {
+                alert('Ошибка соединения: ' + err);
+            }
+        }
+
+        // Initial load
+        loadStatus();
+    </script>
+</body>
+</html>
