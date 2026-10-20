@@ -1,10 +1,11 @@
 const express = require('express');
 const TelegramBot = require('node-telegram-bot-api');
-const { exec, execSync } = require('child_process');
+const { exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const cors = require('cors');
 const localtunnel = require('localtunnel');
+const os = require('os');
 
 // Token provided by user
 const TOKEN = '8827267875:AAHILwtvs21Fz7Q8hbBYzOWYS6co2PHxwk0';
@@ -46,10 +47,11 @@ bot.onText(/\/start/, (msg) => {
     });
 });
 
-// Helper for PowerShell execution
-function runPowerShell(cmd) {
+// Helper for PowerShell execution (with -Sta for GUI/Screen operations)
+function runPowerShell(cmd, useSta = false) {
     return new Promise((resolve, reject) => {
-        exec(`powershell -Command "${cmd}"`, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
+        const psFlag = useSta ? '-Sta' : '';
+        exec(`powershell ${psFlag} -Command "${cmd}"`, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
             if (error) {
                 reject(stderr || error.message);
             } else {
@@ -62,9 +64,10 @@ function runPowerShell(cmd) {
 // API: System Status
 app.get('/api/status', async (req, res) => {
     try {
-        const hostname = require('os').hostname();
-        const platform = require('os').platform();
-        const uptime = require('os').uptime();
+        const hostname = os.hostname();
+        const arch = os.arch() === 'x64' ? '64-bit' : os.arch();
+        const platform = `Windows ${arch}`;
+        const uptime = os.uptime();
         res.json({ success: true, hostname, platform, uptime, publicUrl });
     } catch (err) {
         res.status(500).json({ success: false, error: err.toString() });
@@ -87,7 +90,7 @@ app.get('/api/screenshot', async (req, res) => {
         $bitmap.Dispose()
         `;
 
-        await runPowerShell(psScript);
+        await runPowerShell(psScript, true); // useSta = true is required for Windows.Forms
 
         if (fs.existsSync(screenshotPath)) {
             res.sendFile(screenshotPath);
@@ -105,11 +108,9 @@ app.get('/api/processes', async (req, res) => {
         const psCmd = `Get-Process | Select-Object Id, Name, WorkingSet | ConvertTo-Json -Compress`;
         const output = await runPowerShell(psCmd);
         let processes = JSON.parse(output);
-        // Ensure array
         if (!Array.isArray(processes)) {
             processes = [processes];
         }
-        // Format working set (Memory) to MB
         const formatted = processes.map(p => ({
             id: p.Id,
             name: p.Name,
@@ -161,7 +162,6 @@ app.listen(PORT, async () => {
         publicUrl = tunnel.url;
         console.log(`[TUNNEL] Public HTTPS URL established: ${publicUrl}`);
 
-        // Update bot menu button
         bot.setChatMenuButton({
             menu_button: {
                 type: 'web_app',
@@ -175,6 +175,5 @@ app.listen(PORT, async () => {
         });
     } catch (err) {
         console.log('[TUNNEL] Failed to start localtunnel:', err.message);
-        console.log('[INFO] Web App will work locally or via manual URL setup.');
     }
 });
