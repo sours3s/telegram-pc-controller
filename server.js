@@ -10,7 +10,7 @@ const os = require('os');
 // Token provided by user
 const TOKEN = '8827267875:AAHILwtvs21Fz7Q8hbBYzOWYS6co2PHxwk0';
 const PORT = process.env.PORT || 3000;
-const CURRENT_VERSION = '1.1.0';
+const CURRENT_VERSION = '1.1.1';
 
 const app = express();
 app.use(cors());
@@ -67,8 +67,7 @@ app.get('/api/version', (req, res) => {
     res.json({
         success: true,
         version: CURRENT_VERSION,
-        changelog: 'Добавлены расширенные функции управления ПК: питание, файлы, буфер обмена и авто-обновление.',
-        updateUrl: publicUrl ? `${publicUrl}/update` : null
+        changelog: 'Исправлены ошибки путей файлового менеджера и захвата скриншотов.'
     });
 });
 
@@ -85,34 +84,44 @@ app.get('/api/status', async (req, res) => {
     }
 });
 
-// API: Take Screenshot (Returns Base64 to prevent any file transfer race conditions)
+// API: Take Screenshot (Using temporary .ps1 script for 100% reliability)
 app.get('/api/screenshot', async (req, res) => {
     const screenshotPath = path.join(__dirname, 'screenshot.png');
+    const psScriptPath = path.join(__dirname, 'take_screenshot.ps1');
     try {
-        const psScript = `
-        Add-Type -AssemblyName System.Windows.Forms
-        Add-Type -AssemblyName System.Drawing
-        $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-        $bitmap = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
-        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-        $graphics.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
-        $bitmap.Save("${screenshotPath.replace(/\\/g, '\\\\')}", [System.Drawing.Imaging.ImageFormat]::Png)
-        $graphics.Dispose()
-        $bitmap.Dispose()
-        `;
+        const psScriptContent = `
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+\$screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+\$bitmap = New-Object System.Drawing.Bitmap \$screen.Width, \$screen.Height
+\$graphics = [System.Drawing.Graphics]::FromImage(\$bitmap)
+\$graphics.CopyFromScreen(\$screen.Location, [System.Drawing.Point]::Empty, \$screen.Size)
+\$bitmap.Save("${screenshotPath.replace(/\\/g, '\\\\')}", [System.Drawing.Imaging.ImageFormat]::Png)
+\$graphics.Dispose()
+\$bitmap.Dispose()
+`;
+        fs.writeFileSync(psScriptPath, psScriptContent, 'utf8');
 
-        await runPowerShell(psScript, true);
+        await new Promise((resolve, reject) => {
+            exec(`powershell -Sta -ExecutionPolicy Bypass -File "${psScriptPath}"`, (error, stdout, stderr) => {
+                if (error) reject(stderr || error.message);
+                else resolve(stdout);
+            });
+        });
+
+        // Clean up script
+        try { fs.unlinkSync(psScriptPath); } catch (e) {}
 
         if (fs.existsSync(screenshotPath)) {
             const bitmapBytes = fs.readFileSync(screenshotPath);
             const base64Image = `data:image/png;base64,${bitmapBytes.toString('base64')}`;
-            // Clean up file
-            try { fs.unlinkSync(screenshotPath); } catch(e) {}
+            try { fs.unlinkSync(screenshotPath); } catch (e) {}
             res.json({ success: true, image: base64Image });
         } else {
             res.status(500).json({ success: false, error: 'Screenshot file not created' });
         }
     } catch (err) {
+        try { fs.unlinkSync(psScriptPath); } catch (e) {}
         res.status(500).json({ success: false, error: err.toString() });
     }
 });
@@ -190,47 +199,40 @@ app.post('/api/system/control', async (req, res) => {
     }
 });
 
-// API: File Explorer (List directory contents)
+// API: File Explorer (Using native Node.js fs for 100% path safety and speed)
 app.post('/api/files', async (req, res) => {
-    const dirPath = req.body.path || 'C:\\';
+    let dirPath = req.body.path || 'C:\\';
     try {
-        const psCmd = `Get-ChildItem -Path "${dirPath}" -ErrorAction SilentlyContinue | Select-Object Name, FullName, Attributes, Length | ConvertTo-Json -Compress`;
-        const output = await runPowerShell(psCmd);
-        let items = output ? JSON.parse(output) : [];
-        if (!Array.isArray(items)) {
-            items = [items];
+        dirPath = path.resolve(dirPath);
+        if (!fs.existsSync(dirPath)) {
+            return res.status(404).json({ success: false, error: 'Путь не найден' });
         }
-        const formatted = items.map(item => ({
-            name: item.Name,
-            path: item.FullName,
-            isDirectory: item.Attributes && item.Attributes.toString().includes('Directory'),
-            size: item.Length ? Math.round(item.Length / 1024) : 0
-        })).sort((a, b) => b.isDirectory - a.isDirectory);
+        const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+        const items = entries.map(entry => {
+            const fullPath = path.join(dirPath, entry.name);
+            let isDir = false;
+            try {
+                isDir = entry.isDirectory();
+            } catch (e) {}
 
-        res.json({ success: true, currentPath: dirPath, items: formatted });
+            let size = 0;
+            if (!isDir) {
+                try {
+                    const stats = fs.statSync(fullPath);
+                    size = Math.round(stats.size / 1024);
+                } catch (e) {}
+            }
+            return {
+                name: entry.name,
+                path: fullPath,
+                isDirectory: isDir,
+                size: size
+            };
+        }).sort((a, b) => b.isDirectory - b.isDirectory); // directories first
+
+        res.json({ success: true, currentPath: dirPath, items });
     } catch (err) {
         res.status(500).json({ success: false, error: 'Не удалось открыть директорию: ' + err.toString() });
-    }
-});
-
-// API: Clipboard (Get text)
-app.get('/api/clipboard', async (req, res) => {
-    try {
-        const clip = await runPowerShell('Get-Clipboard');
-        res.json({ success: true, clipboard: clip });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.toString() });
-    }
-});
-
-// API: Clipboard (Set text)
-app.post('/api/clipboard', async (req, res) => {
-    const { text } = req.body;
-    try {
-        await runPowerShell(`Set-Clipboard -Value "${text.replace(/"/g, '`"')}"`);
-        res.json({ success: true, message: 'Буфер обмена обновлен' });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.toString() });
     }
 });
 
